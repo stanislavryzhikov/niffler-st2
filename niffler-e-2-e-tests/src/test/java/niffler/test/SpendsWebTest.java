@@ -32,7 +32,7 @@ public class SpendsWebTest extends BaseWebTest {
 
     @GenerateSpend(
         username = "test",
-        description = "angleina",
+        description = "angelina",
         currency = CurrencyValues.RUB,
         amount = 400,
         category = "test"
