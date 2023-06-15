@@ -1,5 +1,14 @@
 package niffler.db.dao;
 
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+import javax.sql.DataSource;
 import niffler.db.DataSourceProvider;
 import niffler.db.ServiceDB;
 import niffler.db.entity.Authority;
@@ -8,191 +17,209 @@ import niffler.db.entity.UserEntity;
 import org.springframework.security.crypto.factory.PasswordEncoderFactories;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
-import javax.sql.DataSource;
-import java.sql.*;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.UUID;
-
 public class NifflerUsersDAOJdbc implements NifflerUsersDAO {
 
-    private static final DataSource dataSource = DataSourceProvider.INSTANCE.getDataSource(ServiceDB.NIFFLER_AUTH);
-    private static final PasswordEncoder passwordEncoder = PasswordEncoderFactories.createDelegatingPasswordEncoder();
+  private static final DataSource ds = DataSourceProvider.INSTANCE.getDataSource(ServiceDB.NIFFLER_AUTH);
 
-    @Override
-    public int createUser(UserEntity user) { int executeUpdate;
+  @Override
+  public int createUser(UserEntity user) {
+    int executeUpdate;
 
-        try (Connection conn = dataSource.getConnection()) {
+    try (Connection conn = ds.getConnection()) {
 
-            conn.setAutoCommit(false);
+      conn.setAutoCommit(false);
 
-            try (PreparedStatement preparedStatement = conn.prepareStatement("INSERT INTO users "
-                    + "(username, password, enabled, account_non_expired, account_non_locked, credentials_non_expired) "
-                    + " VALUES (?, ?, ?, ?, ?, ?)", Statement.RETURN_GENERATED_KEYS)) {
-                preparedStatement.setString(1, user.getUsername());
-                preparedStatement.setString(2, passwordEncoder.encode(user.getPassword()));
-                preparedStatement.setBoolean(3, user.getEnabled());
-                preparedStatement.setBoolean(4, user.getAccountNonExpired());
-                preparedStatement.setBoolean(5, user.getAccountNonLocked());
-                preparedStatement.setBoolean(6, user.getCredentialsNonExpired());
+      try (PreparedStatement insertUserSt = conn.prepareStatement("INSERT INTO users "
+          + "(username, password, enabled, account_non_expired, account_non_locked, credentials_non_expired) "
+          + " VALUES (?, ?, ?, ?, ?, ?)", Statement.RETURN_GENERATED_KEYS);
+          PreparedStatement insertAuthoritySt = conn.prepareStatement(
+              "INSERT INTO authorities (user_id, authority) VALUES (?, ?)")) {
+        insertUserSt.setString(1, user.getUsername());
+        insertUserSt.setString(2, pe.encode(user.getPassword()));
+        insertUserSt.setBoolean(3, user.getEnabled());
+        insertUserSt.setBoolean(4, user.getAccountNonExpired());
+        insertUserSt.setBoolean(5, user.getAccountNonLocked());
+        insertUserSt.setBoolean(6, user.getCredentialsNonExpired());
+        executeUpdate = insertUserSt.executeUpdate();
 
-                executeUpdate = preparedStatement.executeUpdate();
+        final UUID finalUserId;
 
-                final UUID createdUserId;
-
-                try (ResultSet keys = preparedStatement.getGeneratedKeys()) {
-                    if (keys.next()) {
-                        createdUserId = UUID.fromString(keys.getString(1));
-                        user.setId(createdUserId);
-                    } else {
-                        throw new IllegalArgumentException("Unable to create user, no uuid");
-                    }
-                }
-
-                String insertAuthoritiesSql = "INSERT INTO authorities (user_id, authority) VALUES ('%s', '%s')";
-
-                List<String> sqls = user.getAuthorities()
-                        .stream()
-                        .map(ae -> ae.getAuthority().name())
-                        .map(a -> String.format(insertAuthoritiesSql, createdUserId, a))
-                        .toList();
-
-                for (String sql : sqls) {
-                    try (Statement st2 = conn.createStatement()) {
-                        st2.executeUpdate(sql);
-                    } catch (SQLException e) {
-                        throw new RuntimeException(e);
-                    }
-                }
-            } catch (SQLException e) {
-                conn.rollback();
-                conn.setAutoCommit(true);
-                throw new RuntimeException(e);
-            }
-
-            conn.commit();
-            conn.setAutoCommit(true);
-
-        } catch (SQLException e) {
-            throw new RuntimeException(e);
+        try (ResultSet generatedKeys = insertUserSt.getGeneratedKeys()) {
+          if (generatedKeys.next()) {
+            finalUserId = UUID.fromString(generatedKeys.getString(1));
+            user.setId(finalUserId);
+          } else {
+            throw new SQLException("Creating user failed, no ID present");
+          }
         }
 
-        return executeUpdate;
+        for (AuthorityEntity authority : user.getAuthorities()) {
+          insertAuthoritySt.setObject(1, finalUserId);
+          insertAuthoritySt.setString(2, authority.getAuthority().name());
+          insertAuthoritySt.addBatch();
+          insertAuthoritySt.clearParameters();
+        }
+        insertAuthoritySt.executeBatch();
+      } catch (SQLException e) {
+        conn.rollback();
+        conn.setAutoCommit(true);
+        throw new RuntimeException(e);
+      }
+
+      conn.commit();
+      conn.setAutoCommit(true);
+
+    } catch (SQLException e) {
+      throw new RuntimeException(e);
+    }
+    return executeUpdate;
+  }
+
+  @Override
+  public UserEntity readUser(UUID uuid) {
+    UserEntity userEntity = new UserEntity();
+
+    try (Connection conn = ds.getConnection();
+         PreparedStatement st1 = conn.prepareStatement("SELECT * FROM users WHERE id=(?)")) {
+      st1.setObject(1, uuid);
+      ResultSet rs = st1.executeQuery();
+      if (rs.next()) {
+        userEntity.setId(UUID.fromString(rs.getString(1)));
+        userEntity.setUsername(rs.getString(2));
+        userEntity.setPassword(rs.getString(3));
+        userEntity.setEnabled(rs.getBoolean(4));
+        userEntity.setAccountNonExpired(rs.getBoolean(5));
+        userEntity.setAccountNonLocked(rs.getBoolean(6));
+        userEntity.setCredentialsNonExpired(rs.getBoolean(7));
+      } else {
+        throw new IllegalArgumentException("Can`t find user by given uuid: " + uuid);
+      }
+
+      try (PreparedStatement st2 = conn.prepareStatement("SELECT * FROM authorities WHERE user_id=(?)")){
+        st2.setObject(1, uuid);
+        ResultSet rs2 = st2.executeQuery();
+        List<AuthorityEntity> listAuths = new ArrayList<>();
+
+        while (rs2.next()){
+          AuthorityEntity authorityEntity = new AuthorityEntity();
+          authorityEntity.setId(UUID.fromString(rs2.getString(1)));
+          authorityEntity.setAuthority(Authority.valueOf(rs2.getString(3)));
+          listAuths.add(authorityEntity);
         }
 
-    @Override
-    public UserEntity readUser(UUID uuid) {
-
-        UserEntity userEntity = new UserEntity();
-
-        try (Connection connection = dataSource.getConnection();
-             PreparedStatement prepareStatementUsers =
-                     connection.prepareStatement("SELECT * FROM users WHERE id=(?)");
-             PreparedStatement prepareStatementAuthorities =
-                     connection.prepareStatement("SELECT * FROM authorities WHERE user_id=(?)")
-        ) {
-            prepareStatementUsers.setObject(1, uuid);
-            ResultSet resultSetUsers = prepareStatementUsers.executeQuery();
-            if (resultSetUsers.next()) {
-                userEntity.setId(UUID.fromString(resultSetUsers.getString(1)));
-                userEntity.setUsername(resultSetUsers.getString(2));
-                userEntity.setPassword(resultSetUsers.getString(3));
-                userEntity.setEnabled(resultSetUsers.getBoolean(4));
-                userEntity.setAccountNonExpired(resultSetUsers.getBoolean(5));
-                userEntity.setAccountNonLocked(resultSetUsers.getBoolean(6));
-                userEntity.setCredentialsNonExpired(resultSetUsers.getBoolean(7));
-            } else {
-                throw new IllegalArgumentException("Can`t find user by given uuid: " + uuid);
-            }
-
-            prepareStatementAuthorities.setObject(1, uuid);
-            ResultSet resultSetAuthoritites = prepareStatementAuthorities.executeQuery();
-            List<AuthorityEntity> listAuths = new ArrayList<>();
-
-            while (resultSetAuthoritites.next()) {
-                AuthorityEntity authorityEntity = new AuthorityEntity();
-                authorityEntity.setId(UUID.fromString(resultSetAuthoritites.getString(1)));
-                authorityEntity.setAuthority(Authority.valueOf(resultSetAuthoritites.getString(3)));
-                listAuths.add(authorityEntity);
-
-                userEntity.setAuthorities(listAuths);
-            }
-        } catch (SQLException e) {
-            throw new RuntimeException(e);
-        }
-
-        return userEntity;
+        userEntity.setAuthorities(listAuths);
+      }
+    } catch (SQLException e) {
+      throw new RuntimeException(e);
     }
 
-    @Override
-    public int updateUser(UserEntity user) {
-        int executeUpdate;
+    return userEntity;
+  }
 
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement st1 = conn.prepareStatement("UPDATE users SET "
-                     + "(username, password, enabled, account_non_expired, account_non_locked, credentials_non_expired)="
-                     + "(?, ?, ?, ?, ?, ?) WHERE id=(?)")) {
-            st1.setString(1, user.getUsername());
-            st1.setString(2, passwordEncoder.encode(user.getPassword()));
-            st1.setBoolean(3, user.getEnabled());
-            st1.setBoolean(4, user.getAccountNonExpired());
-            st1.setBoolean(5, user.getAccountNonLocked());
-            st1.setBoolean(6, user.getCredentialsNonExpired());
-            st1.setObject(7, user.getId());
+  @Override
+  public UUID getUserId(String userName) {
+    try (Connection conn = ds.getConnection();
+         PreparedStatement st = conn.prepareStatement("SELECT * FROM users WHERE username = ?")) {
+      st.setString(1, userName);
+      ResultSet resultSet = st.executeQuery();
+      if (resultSet.next()) {
+        return UUID.fromString(resultSet.getString(1));
+      } else {
+        throw new IllegalArgumentException("Can`t find user by given username: " + userName);
+      }
+    } catch (SQLException e) {
+      throw new RuntimeException(e);
+    }
+  }
 
-            executeUpdate = st1.executeUpdate();
-        } catch (SQLException e) {
-            throw new RuntimeException(e);
+  @Override
+  public int removeUser(UserEntity user) {
+    int executeUpdate;
+
+    try (Connection conn = ds.getConnection()) {
+
+      conn.setAutoCommit(false);
+
+      try (PreparedStatement deleteUserSt = conn.prepareStatement("DELETE FROM users WHERE id = ?");
+          PreparedStatement deleteAuthoritySt = conn.prepareStatement(
+              "DELETE FROM authorities WHERE user_id = ?")) {
+        deleteUserSt.setObject(1, user.getId());
+        deleteAuthoritySt.setObject(1, user.getId());
+
+        deleteAuthoritySt.executeUpdate();
+        executeUpdate = deleteUserSt.executeUpdate();
+
+      } catch (SQLException e) {
+        conn.rollback();
+        conn.setAutoCommit(true);
+        throw new RuntimeException(e);
+      }
+
+      conn.commit();
+      conn.setAutoCommit(true);
+
+    } catch (SQLException e) {
+      throw new RuntimeException(e);
+    }
+    return executeUpdate;
+  }
+
+  @Override
+  public int updateUser(UserEntity user) {
+    int executeUpdate;
+
+    try (Connection conn = ds.getConnection();
+         PreparedStatement st1 = conn.prepareStatement("UPDATE users SET "
+                 + "(username, password, enabled, account_non_expired, account_non_locked, credentials_non_expired)="
+                 + "(?, ?, ?, ?, ?, ?) WHERE id=(?)")) {
+      st1.setString(1, user.getUsername());
+      st1.setString(2, pe.encode(user.getPassword()));
+      st1.setBoolean(3, user.getEnabled());
+      st1.setBoolean(4, user.getAccountNonExpired());
+      st1.setBoolean(5, user.getAccountNonLocked());
+      st1.setBoolean(6, user.getCredentialsNonExpired());
+      st1.setObject(7, user.getId());
+
+      executeUpdate = st1.executeUpdate();
+    } catch (SQLException e) {
+      throw new RuntimeException(e);
+    }
+
+    return executeUpdate;
+  }
+
+  @Override
+  public int deleteUser(UUID uuid) {
+    int executeUpdate;
+
+    try (Connection conn = ds.getConnection()) {
+
+      conn.setAutoCommit(false);
+
+      try (PreparedStatement st1 = conn.prepareStatement("DELETE FROM authorities WHERE user_id=(?)")) {
+        st1.setObject(1, uuid);
+
+        st1.executeUpdate();
+
+        try (PreparedStatement st2 = conn.prepareStatement("DELETE FROM users WHERE id=(?)")) {
+          st2.setObject(1, uuid);
+
+          executeUpdate = st2.executeUpdate();
         }
 
-        return executeUpdate;
+      } catch (SQLException e) {
+        conn.rollback();
+        conn.setAutoCommit(true);
+        throw new RuntimeException(e);
+      }
+
+      conn.commit();
+      conn.setAutoCommit(true);
+
+    } catch (SQLException e) {
+      throw new RuntimeException(e);
     }
-    @Override
-    public int deleteUser(UUID uuid) {
-        int executeUpdate;
 
-        try (Connection connection = dataSource.getConnection()) {
-
-            connection.setAutoCommit(false);
-
-            try (PreparedStatement prepareStatementUsers =
-                         connection.prepareStatement("DELETE FROM authorities WHERE user_id=(?)");
-                 PreparedStatement prepareStatementAuthoritites = connection.prepareStatement("DELETE FROM users WHERE id=(?)")
-            ) {
-                prepareStatementUsers.setObject(1, uuid);
-                prepareStatementUsers.executeUpdate();
-
-                prepareStatementAuthoritites.setObject(1, uuid);
-                executeUpdate = prepareStatementAuthoritites.executeUpdate();
-
-            } catch (SQLException e) {
-                connection.rollback();
-                connection.setAutoCommit(true);
-                throw new RuntimeException(e);
-            }
-
-            connection.commit();
-            connection.setAutoCommit(true);
-
-        } catch (SQLException e) {
-            throw new RuntimeException(e);
-        }
-
-        return executeUpdate;
-    }
-        @Override
-    public UUID getUserId(String userName) {
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement st = conn.prepareStatement("SELECT * FROM users WHERE username = ?")) {
-            st.setString(1, userName);
-            ResultSet resultSet = st.executeQuery();
-            if (resultSet.next()) {
-                return UUID.fromString(resultSet.getString(1));
-            } else {
-                throw new IllegalArgumentException("Can`t find user by given username: " + userName);
-            }
-        } catch (SQLException e) {
-            throw new RuntimeException(e);
-        }
-    }
+    return executeUpdate;
+  }
 }

@@ -1,30 +1,30 @@
 package niffler.jupiter.extension;
 
 import com.github.javafaker.Faker;
+import jakarta.persistence.NoResultException;
 import niffler.db.dao.NifflerUsersDAO;
-import niffler.db.dao.NifflerUsersDAOJdbc;
+import niffler.db.dao.NifflerUsersDAOHibernate;
 import niffler.db.entity.Authority;
 import niffler.db.entity.AuthorityEntity;
 import niffler.db.entity.UserEntity;
-import niffler.jupiter.annotation.GenerateUser;
+import niffler.jupiter.annotation.GenerateUserHibernate;
 import org.junit.jupiter.api.extension.*;
 
 import java.util.Arrays;
 
-public class GenerateUserExtension implements ParameterResolver, BeforeEachCallback, AfterTestExecutionCallback {
-
+public class GenerateUserHibernateExtension implements ParameterResolver, BeforeEachCallback, AfterTestExecutionCallback {
     public static ExtensionContext.Namespace NAMESPACE = ExtensionContext.Namespace
-            .create(GenerateUserExtension.class);
+            .create(GenerateUserHibernateExtension.class);
 
     @Override
     public void beforeEach(ExtensionContext context) throws Exception {
         Faker faker = new Faker();
         final String testID = context.getRequiredTestClass() + String.valueOf(context.getTestMethod());
 
-        GenerateUser annotation = context.getRequiredTestMethod()
-                .getAnnotation(GenerateUser.class);
+        GenerateUserHibernate annotation = context.getRequiredTestMethod()
+                .getAnnotation(GenerateUserHibernate.class);
 
-        if (annotation != null){
+        if (annotation != null) {
 
             UserEntity createdUserEntity = new UserEntity();
             createdUserEntity.setUsername(
@@ -39,11 +39,12 @@ public class GenerateUserExtension implements ParameterResolver, BeforeEachCallb
                     a -> {
                         AuthorityEntity ae = new AuthorityEntity();
                         ae.setAuthority(a);
+                        ae.setUser(createdUserEntity);
                         return ae;
                     }
             ).toList());
 
-            NifflerUsersDAO usersDAO = new NifflerUsersDAOJdbc();
+            NifflerUsersDAO usersDAO = new NifflerUsersDAOHibernate();
             usersDAO.createUser(createdUserEntity);
 
             context.getStore(NAMESPACE).put(testID + "user", createdUserEntity);
@@ -66,9 +67,13 @@ public class GenerateUserExtension implements ParameterResolver, BeforeEachCallb
 
     @Override
     public void afterTestExecution(ExtensionContext context) throws Exception {
-        NifflerUsersDAO usersDAO = new NifflerUsersDAOJdbc();
+        NifflerUsersDAO usersDAO = new NifflerUsersDAOHibernate();
         final String testID = context.getRequiredTestClass() + String.valueOf(context.getTestMethod());
 
-        usersDAO.deleteUser((context.getStore(NAMESPACE).get(testID + "user", UserEntity.class)).getId());
+        try {
+            usersDAO.deleteUser((context.getStore(NAMESPACE).get(testID + "user", UserEntity.class)).getId());
+        } catch (NoResultException e) {
+            System.out.println("User already deleted. Cleaning after not necessary.");
+        }
     }
 }

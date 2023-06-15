@@ -3,26 +3,26 @@ package niffler.jupiter.extension;
 import com.github.javafaker.Faker;
 import niffler.db.dao.NifflerUsersDAO;
 import niffler.db.dao.NifflerUsersDAOJdbc;
+import niffler.db.dao.NifflerUsersDAOSpringJdbc;
 import niffler.db.entity.Authority;
 import niffler.db.entity.AuthorityEntity;
 import niffler.db.entity.UserEntity;
-import niffler.jupiter.annotation.GenerateUser;
+import niffler.jupiter.annotation.GenerateUserSpringJDBC;
 import org.junit.jupiter.api.extension.*;
 
 import java.util.Arrays;
 
-public class GenerateUserExtension implements ParameterResolver, BeforeEachCallback, AfterTestExecutionCallback {
-
+public class GenerateUserSpringJDBCExtension implements ParameterResolver, BeforeEachCallback, AfterTestExecutionCallback {
     public static ExtensionContext.Namespace NAMESPACE = ExtensionContext.Namespace
-            .create(GenerateUserExtension.class);
+            .create(GenerateUserSpringJDBCExtension.class);
 
     @Override
     public void beforeEach(ExtensionContext context) throws Exception {
         Faker faker = new Faker();
         final String testID = context.getRequiredTestClass() + String.valueOf(context.getTestMethod());
 
-        GenerateUser annotation = context.getRequiredTestMethod()
-                .getAnnotation(GenerateUser.class);
+        GenerateUserSpringJDBC annotation = context.getRequiredTestMethod()
+                .getAnnotation(GenerateUserSpringJDBC.class);
 
         if (annotation != null){
 
@@ -43,7 +43,7 @@ public class GenerateUserExtension implements ParameterResolver, BeforeEachCallb
                     }
             ).toList());
 
-            NifflerUsersDAO usersDAO = new NifflerUsersDAOJdbc();
+            NifflerUsersDAO usersDAO = new NifflerUsersDAOSpringJdbc();
             usersDAO.createUser(createdUserEntity);
 
             context.getStore(NAMESPACE).put(testID + "user", createdUserEntity);
