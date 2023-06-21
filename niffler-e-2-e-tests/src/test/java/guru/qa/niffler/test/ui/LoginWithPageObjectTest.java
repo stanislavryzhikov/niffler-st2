@@ -7,6 +7,7 @@ import guru.qa.niffler.jupiter.annotation.GenerateUser;
 import guru.qa.niffler.model.UserJson;
 import guru.qa.niffler.page.MainFrontPage;
 import guru.qa.niffler.page.MainPage;
+import guru.qa.niffler.page.ProfilePage;
 import io.qameta.allure.Allure;
 import io.qameta.allure.AllureId;
 import org.junit.jupiter.api.Test;
@@ -27,20 +28,66 @@ public class LoginWithPageObjectTest extends BaseWebTest {
   })
   @ParameterizedTest
   @Test
-  void positiveLogin2(@ClasspathUser UserJson user) {
-    System.out.println(user.toString());
+  void positiveLogin(@ClasspathUser UserJson user) {
     Selenide.open(MainFrontPage.URL, MainFrontPage.class).clickOnLoginButton()
             .checkThatPageLoad()
             .fillLoginForm(user.getUsername(), "12345");
     new MainPage().checkThatPageLoad();
   }
 
+  @ValueSource(strings = {
+          "testdata/dima.json",
+          "testdata/emma.json"
+  })
+  @ParameterizedTest
   @Test
-  void negativeLoginTest() {
+  void setUserNameTest(@ClasspathUser UserJson user) {
+
     Selenide.open(MainFrontPage.URL, MainFrontPage.class).clickOnLoginButton()
             .checkThatPageLoad()
-            .fillLoginForm("000302032", "ferfejkljvflv")
-            .checkErrorMessage("Неверные учетные данные пользователя");
+            .fillLoginForm(user.getUsername(), "12345");
+    new MainPage().checkThatPageLoad();
+    new MainPage().getHeader().goToProfilePage();
+    new ProfilePage().setName(user.getUsername()).setSurname("TestSurname").submit();
+
+  }
+  @ValueSource(strings = {
+          "testdata/dima.json",
+          "testdata/emma.json"
+  })
+  @ParameterizedTest
+  @Test
+  void addCategoryTest(@ClasspathUser UserJson user) {
+
+    Selenide.open(MainFrontPage.URL, MainFrontPage.class).clickOnLoginButton()
+            .checkThatPageLoad()
+            .fillLoginForm(user.getUsername(), "12345");
+    new MainPage().checkThatPageLoad();
+    new MainPage().getHeader().goToProfilePage();
+    new ProfilePage().createCategory("Test category");
+
+  }
+  @ValueSource(strings = {
+          "testdata/dima.json",
+          "testdata/emma.json"
+  })
+  @ParameterizedTest
+  @Test
+  void addNewSpendingTest(@ClasspathUser UserJson user){
+    Selenide.open(MainFrontPage.URL, MainFrontPage.class).clickOnLoginButton()
+            .checkThatPageLoad()
+            .fillLoginForm(user.getUsername(), "12345");
+    new MainPage().checkThatPageLoad();
+    new MainPage().addNewSpending("Test","999");
   }
 
+  @Test
+  void dummy() {
+    Selenide.open(MainFrontPage.URL, MainFrontPage.class).clickOnLoginButton()
+            .checkThatPageLoad()
+            .fillLoginForm("dima", "12345");
+    new MainPage().checkThatPageLoad();
+    new MainPage().addNewSpending("Test","999");
+
+  }
 }
